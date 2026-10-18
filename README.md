@@ -1,3 +1,7 @@
+<img width="451" height="577" alt="{7D9B2211-F9B4-4F10-8DD8-E5D744157960}" src="https://github.com/user-attachments/assets/81c14a56-6435-48e9-82d3-f4845902c4cc" />
+
+<img width="322" height="418" alt="{9850114D-4F10-42E3-8F2B-FCBAD4A76B5D}" src="https://github.com/user-attachments/assets/9a6b2c6c-76b0-4afd-9bde-db3685ee7658" />
+
 # JBL Tune 770NC Windows Controller
 
 A lightweight Windows system-tray controller for the **JBL Tune 770NC** headphones, built with Python and PySide6.
