@@ -1,4 +1,3 @@
-
 import os
 import re
 import subprocess
@@ -6,11 +5,10 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
-from settings import load_config, save_address, normalize_address
+from settings import save_address, normalize_address
+
 
 def get_windows_battery():
-    import subprocess
-
     cmd = r"""Get-PnpDevice -Class 'Bluetooth' | ForEach-Object {
         if ($_.FriendlyName -eq 'JBL Tune 770NC') {
             $b = $_ | Get-PnpDeviceProperty -KeyName '{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2' -ErrorAction SilentlyContinue
@@ -21,17 +19,19 @@ def get_windows_battery():
     try:
         out = subprocess.check_output(
             ["powershell.exe", "-NoProfile", "-Command", cmd],
-            text=True, stderr=subprocess.DEVNULL,
-            creationflags=0x08000000
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
         for line in out.splitlines():
             if line.strip().isdigit():
                 return int(line.strip())
+
     except Exception as e:
         print("Battery error:", e)
 
     return -1
-
 
 
 class Signals(QObject):
@@ -53,22 +53,47 @@ class Task(QRunnable):
             self.signals.finished.emit(self.command, None, str(exc))
 
     def execute(self):
-        backend = Path(__file__).resolve().with_name("anc.py")
+        # Locate the backend in development or in the PyInstaller bundle.
+        if getattr(sys, "frozen", False):
+            backend = Path(sys._MEIPASS) / "anc.py"
+        else:
+            backend = Path(__file__).resolve().with_name("anc.py")
 
         if not backend.is_file():
             raise RuntimeError(
-                f"Cannot find anc.py beside the app:\n{backend}"
+                f"Cannot find anc.py:\n{backend}"
             )
 
+        # Preserve the Bluetooth address for the backend process.
         env = os.environ.copy()
         if self.address:
             env["JBL_BD"] = self.address
 
-        command = "get" if self.command in ("refresh", "test") else self.command
+        # Refresh and connection tests use the backend's "get" command.
+        command = (
+            "get"
+            if self.command in ("refresh", "test")
+            else self.command
+        )
+
+        # A frozen app must invoke its own hidden backend mode.
+        # In development, launch anc.py using the regular Python interpreter.
+        if getattr(sys, "frozen", False):
+            args = [
+                sys.executable,
+                "--jbl-backend",
+                command,
+            ]
+        else:
+            args = [
+                sys.executable,
+                str(backend),
+                command,
+            ]
 
         try:
             result = subprocess.run(
-                [sys.executable, str(backend), command],
+                args,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -76,8 +101,11 @@ class Task(QRunnable):
                 timeout=12,
                 cwd=str(backend.parent),
                 env=env,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0
+                ),
             )
+
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 "The Bluetooth command timed out. Check that your "
@@ -92,7 +120,8 @@ class Task(QRunnable):
 
         if result.returncode != 0:
             raise RuntimeError(
-                output or f"anc.py exited with code {result.returncode}."
+                output
+                or f"anc.py exited with code {result.returncode}."
             )
 
         if command == "poweroff":
@@ -103,8 +132,14 @@ class Task(QRunnable):
                 "output": output,
             }
 
-        match = re.search(r"\(mode=([^)]+)\)", output, re.IGNORECASE)
-        mode = match.group(1).strip().upper() if match else "UNKNOWN"
+        match = re.search(
+            r"\(mode=([^)]+)\)", output, re.IGNORECASE
+        )
+        mode = (
+            match.group(1).strip().upper()
+            if match
+            else "UNKNOWN"
+        )
 
         if mode in ("AMBIENTAWARE", "AMBIENT AWARE"):
             shown = "Ambient Aware"
@@ -121,7 +156,9 @@ class Task(QRunnable):
         if match:
             status = f"Connected · Current mode: {shown}"
         elif command == "get":
-            status = "Command completed, but no mode response was received."
+            status = (
+                "Command completed, but no mode response was received."
+            )
         else:
             status = f"{command.title()} command completed."
 
@@ -155,10 +192,13 @@ class HeadsetController(QObject):
 
     def run_command(self, command):
         if self.busy:
-            self.status_changed.emit("A Bluetooth command is already running…")
+            self.status_changed.emit(
+                "A Bluetooth command is already running…"
+            )
             return
 
         self.busy = True
+
         messages = {
             "get": "Reading current mode…",
             "refresh": "Checking headphones…",
@@ -169,7 +209,10 @@ class HeadsetController(QObject):
             "talkthru": "Enabling TalkThru…",
             "off": "Turning ANC off…",
         }
-        self.status_changed.emit(messages.get(command, f"Running {command}…"))
+
+        self.status_changed.emit(
+            messages.get(command, f"Running {command}…")
+        )
 
         self.task = Task(self.address, command)
         self.task.signals.finished.connect(self._finished)
@@ -191,6 +234,10 @@ class HeadsetController(QObject):
             return
 
         self.status_changed.emit(result["status"])
-        self.connection_changed.emit(result.get("connected", False))
-        self.mode_changed.emit(result.get("mode", "UNKNOWN"))
+        self.connection_changed.emit(
+            result.get("connected", False)
+        )
+        self.mode_changed.emit(
+            result.get("mode", "UNKNOWN")
+        )
         self.battery_changed.emit(get_windows_battery())

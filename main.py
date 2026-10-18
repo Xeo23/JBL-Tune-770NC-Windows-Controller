@@ -1,13 +1,33 @@
-
+import os
+import runpy
 import sys
+from pathlib import Path
+
+# Handle Bluetooth backend commands in the packaged PyInstaller EXE.
+# This block must run before the normal GUI imports.
+if (
+    getattr(sys, "frozen", False)
+    and len(sys.argv) >= 3
+    and sys.argv[1] == "--jbl-backend"
+):
+    backend = Path(sys._MEIPASS) / "anc.py"
+
+    if not backend.is_file():
+        raise SystemExit("Bundled anc.py was not found.")
+
+    os.chdir(backend.parent)
+    sys.argv = [str(backend), *sys.argv[2:]]
+
+    runpy.run_path(str(backend), run_name="__main__")
+    raise SystemExit(0)
+
 
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 
 from ui import HeadsetWindow, make_icon
 from controller import HeadsetController
 from settings import load_config
-from PySide6.QtGui import QAction, QActionGroup
 
 
 def main():
@@ -34,7 +54,7 @@ def main():
     tray.setToolTip("JBL Tune 770NC")
 
     controller.connection_changed.connect(
-    lambda connected: tray.setIcon(make_icon(connected))
+        lambda connected: tray.setIcon(make_icon(connected))
     )
 
     menu = QMenu()
@@ -79,6 +99,7 @@ def main():
             color: #777b80;
         }
     """)
+
     menu.addAction("Open JBL Controller", open_window)
     menu.addSeparator()
 
@@ -94,9 +115,9 @@ def main():
     ]:
         action = QAction(label, menu)
         action.setCheckable(True)
+
         mode_group.addAction(action)
         menu.addAction(action)
-
         mode_actions[command] = action
 
         action.triggered.connect(
@@ -108,7 +129,7 @@ def main():
 
     power_action = QAction("Power Off Headphones", menu)
     power_action.triggered.connect(
-        lambda: controller.run_command("poweroff")
+        lambda checked=False: controller.run_command("poweroff")
     )
     menu.addAction(power_action)
 
@@ -118,7 +139,10 @@ def main():
 
     settings_action = QAction("Bluetooth Device Settings…", menu)
     settings_action.triggered.connect(
-        lambda: (open_window(), window.show_settings())
+        lambda checked=False: (
+            open_window(),
+            window.show_settings()
+        )
     )
     menu.addAction(settings_action)
 
@@ -133,6 +157,7 @@ def main():
             "ANC": "anc",
             "AmbientAware": "ambient",
             "AMBIENTAWARE": "ambient",
+            "AMBIENT AWARE": "ambient",
             "TalkThru": "talkthru",
             "TALKTHRU": "talkthru",
             "OFF": "off",
@@ -143,9 +168,8 @@ def main():
         if command in mode_actions:
             mode_actions[command].setChecked(True)
 
-
     controller.mode_changed.connect(update_tray_mode)
-    menu.aboutToShow.connect(controller.refresh)    
+    menu.aboutToShow.connect(controller.refresh)
 
     tray.setContextMenu(menu)
 
@@ -162,7 +186,10 @@ def main():
     tray.show()
 
     controller.refresh()
-    #window.show()
+
+    # The app starts in the system tray.
+    # Uncomment the next line to show the window at startup.
+    # window.show()
 
     sys.exit(app.exec())
 
